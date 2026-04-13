@@ -1,0 +1,59 @@
+name: Deploy to Dev
+
+permissions:
+  contents: read
+
+on:
+  workflow_run:
+    workflows: ["CI — Build & Push Docker Images"]
+    branches: [dev]
+    types: [completed]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: dev
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          script: |
+            set -e
+
+            # Pull latest code to get compose files on server
+            cd /srv/myapp
+            git pull origin dev
+
+            # Write dev env file
+            cat > dev.env << ENVEOF
+            DOCKERHUB_USERNAME=${{ secrets.DOCKERHUB_USERNAME }}
+            IMAGE_TAG=dev
+            NGINX_PORT=8080
+            NGINX_CONF=dev.conf
+            NODE_ENV=development
+            POSTGRES_USER=${{ secrets.DEV_POSTGRES_USER }}
+            POSTGRES_PASSWORD=${{ secrets.DEV_POSTGRES_PASSWORD }}
+            POSTGRES_DB=${{ secrets.DEV_POSTGRES_DB }}
+            JWT_SECRET=${{ secrets.DEV_JWT_SECRET }}
+            STRIPE_SECRET_KEY=${{ secrets.DEV_STRIPE_SECRET_KEY }}
+            ENVEOF
+
+            # Login to Docker Hub
+            echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u ${{ secrets.DOCKERHUB_USERNAME }} --password-stdin
+
+            # Deploy with project name for isolation
+            docker compose -p storiva-dev -f docker/docker-compose.dev.yml --env-file dev.env pull
+            docker compose -p storiva-dev -f docker/docker-compose.dev.yml --env-file dev.env up -d --remove-orphans
+            docker image prune -f
+
+            sleep 8
+            echo "Dev deploy complete"
+            docker compose -p storiva-dev -f docker/docker-compose.dev.yml ps

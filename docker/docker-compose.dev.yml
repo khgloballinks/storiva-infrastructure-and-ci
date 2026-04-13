@@ -1,0 +1,167 @@
+version: "3.8"
+
+# ── Dev / Staging Environment ─────────────────────────────────────────────────
+# Shared compose file for dev and staging.
+# Differentiated by project name (-p) and env vars:
+#   Dev:     NGINX_PORT=8080  IMAGE_TAG=dev      NODE_ENV=development
+#   Staging: NGINX_PORT=8081  IMAGE_TAG=staging   NODE_ENV=staging
+
+networks:
+  app:
+    driver: bridge
+
+volumes:
+  postgres-data:
+
+services:
+
+  # ── Postgres ───────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - app
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER}" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Nginx ──────────────────────────────────────────────────────────────────
+  nginx:
+    image: nginx:alpine
+    restart: unless-stopped
+    ports:
+      - "${NGINX_PORT:-8080}:80"
+    volumes:
+      - ./nginx/${NGINX_CONF:-dev.conf}:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - gateway
+    networks:
+      - app
+
+  # ── Gateway ────────────────────────────────────────────────────────────────
+  gateway:
+    image: ${DOCKERHUB_USERNAME}/gateway-service:${IMAGE_TAG:-dev}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: 3000
+      AUTH_SERVICE_URL: http://auth:3001
+      PROFILE_SERVICE_URL: http://profile:3002
+      PAYMENT_SERVICE_URL: http://payment:3003
+      NOTIFICATION_SERVICE_URL: http://notification:3004
+      STORAGE_SERVICE_URL: http://storage:3005
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app
+
+  # ── Auth ───────────────────────────────────────────────────────────────────
+  auth:
+    image: ${DOCKERHUB_USERNAME}/auth-service:${IMAGE_TAG:-dev}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: 3001
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      JWT_SECRET: ${JWT_SECRET}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3001/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app
+
+  # ── Profile ────────────────────────────────────────────────────────────────
+  profile:
+    image: ${DOCKERHUB_USERNAME}/profile-service:${IMAGE_TAG:-dev}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: 3002
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3002/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app
+
+  # ── Payment ────────────────────────────────────────────────────────────────
+  payment:
+    image: ${DOCKERHUB_USERNAME}/payment-service:${IMAGE_TAG:-dev}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: 3003
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3003/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app
+
+  # ── Notification ───────────────────────────────────────────────────────────
+  notification:
+    image: ${DOCKERHUB_USERNAME}/notification-service:${IMAGE_TAG:-dev}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: 3004
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3004/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app
+
+  # ── Storage ────────────────────────────────────────────────────────────────
+  storage:
+    image: ${DOCKERHUB_USERNAME}/storage-service:${IMAGE_TAG:-dev}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: 3005
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3005/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app

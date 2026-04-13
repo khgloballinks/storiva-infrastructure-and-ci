@@ -1,0 +1,8 @@
+{
+  "name": "storiva-backend",
+  "private": true,
+  "workspaces": [
+    "services/*",
+    "packages/*"
+  ]
+}
