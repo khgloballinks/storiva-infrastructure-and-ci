@@ -12,6 +12,7 @@ on:
 
 jobs:
   deploy:
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     environment: production
 
@@ -19,14 +20,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Guard - main branch only
-        run: |
-          if [ "${{ github.ref }}" != "refs/heads/main" ]; then
-            echo "Production deploys must come from main branch"
-            exit 1
-          fi
-
-      - name: Deploy to EC2
+      - name: Deploy to Production EC2
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_HOST }}
@@ -35,12 +29,14 @@ jobs:
           script: |
             set -e
 
-            # Pull latest code to get compose files on server
+            echo "📦 Pulling latest code..."
             cd /srv/myapp
-            git pull origin main
+            git fetch origin main
+            git reset --hard origin/main
 
-            # Write prod env file
-            cat > prod.env << ENVEOF
+            echo "📝 Writing env file..."
+            ENV_FILE=$(mktemp)
+            cat > "$ENV_FILE" << ENVEOF
             DOCKERHUB_USERNAME=${{ secrets.DOCKERHUB_USERNAME }}
             IMAGE_TAG=latest
             POSTGRES_USER=${{ secrets.PROD_POSTGRES_USER }}
@@ -51,19 +47,40 @@ jobs:
             STRIPE_SECRET_KEY=${{ secrets.PROD_STRIPE_SECRET_KEY }}
             ENVEOF
 
-            # Login to Docker Hub
+            echo "🔐 Logging into Docker Hub..."
             echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u ${{ secrets.DOCKERHUB_USERNAME }} --password-stdin
 
-            # Pull latest images
-            docker compose -p storiva-prod -f docker/docker-compose.prod.yml --env-file prod.env pull
+            echo "💾 Saving current image state for rollback..."
+            docker compose -p storiva-prod -f docker/docker-compose.prod.yml images > /tmp/pre-deploy-images.txt || true
 
-            # Rolling restart — one service at a time
+            echo "📥 Pulling latest images..."
+            docker compose -p storiva-prod -f docker/docker-compose.prod.yml --env-file "$ENV_FILE" pull
+
+            echo "🚀 Rolling restart — one service at a time..."
             for SERVICE in gateway auth profile payment notification storage; do
-              echo "Restarting $SERVICE..."
-              docker compose -p storiva-prod -f docker/docker-compose.prod.yml --env-file prod.env up -d --wait --no-deps $SERVICE
+              echo "  ↻ Restarting $SERVICE..."
+              docker compose -p storiva-prod -f docker/docker-compose.prod.yml --env-file "$ENV_FILE" up -d --wait --no-deps $SERVICE
+              echo "  ✅ $SERVICE restarted"
             done
 
+            echo "🧹 Cleaning up..."
+            rm -f "$ENV_FILE"
             docker image prune -f
-            sleep 8
-            echo "Production deploy complete"
+
+            echo "⏳ Waiting for services to stabilize..."
+            sleep 15
+
+            echo "🔍 Checking service health..."
+            UNHEALTHY=$(docker compose -p storiva-prod -f docker/docker-compose.prod.yml ps --format json | grep -c '"Health":"unhealthy"' || true)
+            if [ "$UNHEALTHY" -gt 0 ]; then
+              echo "❌ $UNHEALTHY unhealthy service(s) detected — check logs!"
+              docker compose -p storiva-prod -f docker/docker-compose.prod.yml ps
+              echo ""
+              echo "💡 To rollback, SSH into the server and run:"
+              echo "   docker compose -p storiva-prod -f docker/docker-compose.prod.yml up -d --no-deps <service>"
+              echo "   with the previous image SHA from /tmp/pre-deploy-images.txt"
+              exit 1
+            fi
+
+            echo "✅ Production deploy complete!"
             docker compose -p storiva-prod -f docker/docker-compose.prod.yml ps
