@@ -12,6 +12,7 @@ on:
 
 jobs:
   deploy:
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     environment: staging
 
@@ -19,7 +20,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Deploy to EC2
+      - name: Deploy to Staging EC2
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_HOST }}
@@ -28,15 +29,17 @@ jobs:
           script: |
             set -e
 
-            # Pull latest code to get compose files on server
+            echo "📦 Pulling latest code..."
             cd /srv/myapp
-            git pull origin staging
+            git fetch origin staging
+            git reset --hard origin/staging
 
-            # Write staging env file
-            cat > staging.env << ENVEOF
+            echo "📝 Writing env file..."
+            ENV_FILE=$(mktemp)
+            cat > "$ENV_FILE" << ENVEOF
             DOCKERHUB_USERNAME=${{ secrets.DOCKERHUB_USERNAME }}
             IMAGE_TAG=staging
-            NGINX_PORT=8081
+            NGINX_PORT=8080
             NGINX_CONF=staging.conf
             NODE_ENV=staging
             POSTGRES_USER=${{ secrets.STAGING_POSTGRES_USER }}
@@ -46,14 +49,29 @@ jobs:
             STRIPE_SECRET_KEY=${{ secrets.STAGING_STRIPE_SECRET_KEY }}
             ENVEOF
 
-            # Login to Docker Hub
+            echo "🔐 Logging into Docker Hub..."
             echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u ${{ secrets.DOCKERHUB_USERNAME }} --password-stdin
 
-            # Deploy with project name for isolation (same compose file, different project)
-            docker compose -p storiva-staging -f docker/docker-compose.dev.yml --env-file staging.env pull
-            docker compose -p storiva-staging -f docker/docker-compose.dev.yml --env-file staging.env up -d --remove-orphans
+            echo "📥 Pulling latest images..."
+            docker compose -p storiva-staging -f docker/docker-compose.staging.yml --env-file "$ENV_FILE" pull
+
+            echo "🚀 Starting services..."
+            docker compose -p storiva-staging -f docker/docker-compose.staging.yml --env-file "$ENV_FILE" up -d --remove-orphans
+
+            echo "🧹 Cleaning up..."
+            rm -f "$ENV_FILE"
             docker image prune -f
 
-            sleep 8
-            echo "Staging deploy complete"
-            docker compose -p storiva-staging -f docker/docker-compose.dev.yml ps
+            echo "⏳ Waiting for services to stabilize..."
+            sleep 15
+
+            echo "🔍 Checking service health..."
+            UNHEALTHY=$(docker compose -p storiva-staging -f docker/docker-compose.staging.yml ps --format json | grep -c '"Health":"unhealthy"' || true)
+            if [ "$UNHEALTHY" -gt 0 ]; then
+              echo "❌ $UNHEALTHY unhealthy service(s) detected!"
+              docker compose -p storiva-staging -f docker/docker-compose.staging.yml ps
+              exit 1
+            fi
+
+            echo "✅ Staging deploy complete!"
+            docker compose -p storiva-staging -f docker/docker-compose.staging.yml ps
