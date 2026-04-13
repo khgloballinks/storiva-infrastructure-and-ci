@@ -1,0 +1,76 @@
+name: Deploy to Dev
+
+permissions:
+  contents: read
+
+on:
+  workflow_run:
+    workflows: ["CI — Build & Push Docker Images"]
+    branches: [dev]
+    types: [completed]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    # Only deploy if CI passed
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    environment: dev
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Deploy to Dev EC2
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEV_SERVER_HOST }}
+          username: ${{ secrets.DEV_SERVER_USER }}
+          key: ${{ secrets.DEV_SERVER_SSH_KEY }}
+          script: |
+            set -e
+
+            echo "📦 Pulling latest code..."
+            cd /srv/myapp
+            git fetch origin dev
+            git reset --hard origin/dev
+
+            echo "📝 Writing env file..."
+            cat > dev.env << ENVEOF
+            DOCKERHUB_USERNAME=${{ secrets.DOCKERHUB_USERNAME }}
+            IMAGE_TAG=dev
+            NGINX_PORT=8080
+            NGINX_CONF=dev.conf
+            NODE_ENV=development
+            POSTGRES_USER=${{ secrets.DEV_POSTGRES_USER }}
+            POSTGRES_PASSWORD=${{ secrets.DEV_POSTGRES_PASSWORD }}
+            POSTGRES_DB=${{ secrets.DEV_POSTGRES_DB }}
+            JWT_SECRET=${{ secrets.DEV_JWT_SECRET }}
+            STRIPE_SECRET_KEY=${{ secrets.DEV_STRIPE_SECRET_KEY }}
+            ENVEOF
+
+            echo "🔐 Logging into Docker Hub..."
+            echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u ${{ secrets.DOCKERHUB_USERNAME }} --password-stdin
+
+            echo "📥 Pulling latest images..."
+            docker compose -p storiva-dev -f docker/docker-compose.dev.yml --env-file dev.env pull
+
+            echo "🚀 Starting services..."
+            docker compose -p storiva-dev -f docker/docker-compose.dev.yml --env-file dev.env up -d --remove-orphans
+
+            echo "🧹 Pruning old images..."
+            docker image prune -f
+
+            echo "⏳ Waiting for services to stabilize..."
+            sleep 15
+
+            echo "🔍 Checking service health..."
+            UNHEALTHY=$(docker compose -p storiva-dev -f docker/docker-compose.dev.yml ps --format json | grep -c '"Health":"unhealthy"' || true)
+            if [ "$UNHEALTHY" -gt 0 ]; then
+              echo "❌ $UNHEALTHY unhealthy service(s) detected!"
+              docker compose -p storiva-dev -f docker/docker-compose.dev.yml ps
+              exit 1
+            fi
+
+            echo "✅ Dev deploy complete!"
+            docker compose -p storiva-dev -f docker/docker-compose.dev.yml ps

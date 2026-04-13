@@ -23,9 +23,9 @@ jobs:
       - name: Deploy to Staging EC2
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
+          host: ${{ secrets.STAGING_SERVER_HOST }}
+          username: ${{ secrets.STAGING_SERVER_USER }}
+          key: ${{ secrets.STAGING_SERVER_SSH_KEY }}
           script: |
             set -e
 
@@ -39,8 +39,6 @@ jobs:
             cat > "$ENV_FILE" << ENVEOF
             DOCKERHUB_USERNAME=${{ secrets.DOCKERHUB_USERNAME }}
             IMAGE_TAG=staging
-            NGINX_PORT=8080
-            NGINX_CONF=staging.conf
             NODE_ENV=staging
             POSTGRES_USER=${{ secrets.STAGING_POSTGRES_USER }}
             POSTGRES_PASSWORD=${{ secrets.STAGING_POSTGRES_PASSWORD }}
@@ -57,6 +55,9 @@ jobs:
 
             echo "🚀 Starting services..."
             docker compose -p storiva-staging -f docker/docker-compose.staging.yml --env-file "$ENV_FILE" up -d --remove-orphans
+
+            echo "🔄 Reloading host nginx..."
+            sudo systemctl reload nginx
 
             echo "🧹 Cleaning up..."
             rm -f "$ENV_FILE"

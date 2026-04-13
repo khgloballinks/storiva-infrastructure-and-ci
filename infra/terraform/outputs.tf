@@ -22,3 +22,7 @@ output "rds_endpoint" {
   description = "The endpoint of the RDS PostgreSQL instance (Use this for PROD_DB_HOST secret)"
   value       = aws_db_instance.storiva_db.endpoint
 }
+output "route53_nameservers" {
+  description = "Point your domain registrar to these nameservers"
+  value       = aws_route53_zone.main.name_servers
+}

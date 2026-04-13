@@ -9,7 +9,7 @@ on:
     paths:
       - "services/**"
       - "packages/shared/**"
-      - "package-json"
+      - "package.json"
       - "package-lock.json"
       - "docker/**"
   workflow_dispatch:
@@ -76,6 +76,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Generate Prisma Client
+        run: |
+          npx prisma generate --schema=packages/shared/prisma/schema.prisma
+
       - name: Run tests
         run: |
           cd services/${{ matrix.service }}
@@ -109,5 +113,14 @@ jobs:
           tags: |
             ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.service }}-service:${{ steps.tag.outputs.tag }}
             ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.service }}-service:${{ github.sha }}
-          cache-from: type=gha,scope{{ matrix.service }}
+          cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+          outputs: type=local,dest=/tmp/build-cache-${{ matrix.service }}
+        id: build
+
+      - name: Upload cache
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-cache-${{ matrix.service }}
+          path: /tmp/build-cache-${{ matrix.service }}
+          retention-days: 1
