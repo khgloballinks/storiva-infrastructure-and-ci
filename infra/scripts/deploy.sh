@@ -1,65 +1,72 @@
 #!/usr/bin/env bash
-# ── deploy.sh ─────────────────────────────────────────────────────────────────
-# Simple deploy script for the shared infrastructure.
-# Usage:
-#   ./infra/scripts/deploy.sh plan     → preview changes
-#   ./infra/scripts/deploy.sh apply    → apply changes
-#   ./infra/scripts/deploy.sh destroy  → destroy everything (careful!)
-
 set -euo pipefail
 
-TERRAFORM_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../terraform" && pwd)"
+show_usage() {
+    cat << EOF
+Usage: $(basename "$0") [plan|apply|destroy]
+
+Actions:
+  plan    - Preview changes (default)
+  apply   - Apply changes
+  destroy - Destroy all infrastructure (careful!)
+
+Examples:
+  $(basename "$0") plan
+  $(basename "$0") apply
+  $(basename "$0") destroy
+EOF
+}
+
 ACTION="${1:-plan}"
 
-echo "📁 Working directory: $TERRAFORM_DIR"
-echo "🔧 Action: $ACTION"
-echo "🌍 Workspace: $(terraform -chdir="$TERRAFORM_DIR" workspace show)"
-echo ""
-
-# ── Validate tfvars exists ────────────────────────────────────────────────────
-if [ ! -f "$TERRAFORM_DIR/terraform.tfvars" ]; then
-  echo "❌ terraform.tfvars not found in $TERRAFORM_DIR"
-  exit 1
+if [[ ! "$ACTION" =~ ^(plan|apply|destroy)$ ]]; then
+    echo "Error: Invalid action '$ACTION'"
+    show_usage
+    exit 1
 fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TERRAFORM_DIR="$(dirname "$SCRIPT_DIR")/terraform"
+
+echo "Working directory: $TERRAFORM_DIR"
+echo "Action: $ACTION"
+echo ""
 
 cd "$TERRAFORM_DIR"
 
-# ── Init ──────────────────────────────────────────────────────────────────────
-terraform init -reconfigure
+if [ ! -f "terraform.tfvars" ]; then
+    echo "Error: terraform.tfvars not found"
+    exit 1
+fi
 
-# ── Validate ──────────────────────────────────────────────────────────────────
-echo "🔎 Validating configuration..."
+terraform init
+
+echo "Validating configuration..."
 terraform validate
 
 echo ""
 
-# ── Actions ───────────────────────────────────────────────────────────────────
 case "$ACTION" in
-  plan)
-    echo "🔍 Planning..."
-    terraform plan -var-file="terraform.tfvars"
-    ;;
-  apply)
-    echo "🚀 Applying..."
-    terraform apply -var-file="terraform.tfvars"
-    echo ""
-    echo "✅ Done! Outputs:"
-    terraform output
-    ;;
-  destroy)
-    echo "⚠️  WARNING: This will destroy ALL infrastructure!"
-    echo "⚠️  This includes EC2 instances, RDS, Elastic IPs and DNS records!"
-    echo ""
-    read -rp "Type 'yes' to confirm: " confirm
-    if [ "$confirm" = "yes" ]; then
-      terraform destroy -var-file="terraform.tfvars"
-    else
-      echo "Aborted."
-    fi
-    ;;
-  *)
-    echo "❌ Unknown action: $ACTION"
-    echo "Usage: $0 [plan|apply|destroy]"
-    exit 1
-    ;;
+    plan)
+        echo "Planning..."
+        terraform plan
+        ;;
+    apply)
+        echo "Applying..."
+        terraform apply
+        echo ""
+        echo "Done! Outputs:"
+        terraform output
+        ;;
+    destroy)
+        echo "WARNING: This will destroy ALL infrastructure!"
+        echo "WARNING: This includes EC2 instances, RDS, Elastic IPs and DNS records!"
+        echo ""
+        read -rp "Type 'yes' to confirm: " confirm
+        if [ "$confirm" = "yes" ]; then
+            terraform destroy
+        else
+            echo "Aborted."
+        fi
+        ;;
 esac
