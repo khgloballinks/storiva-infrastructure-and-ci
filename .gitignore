@@ -11,3 +11,4 @@ docker/.env
 
 .envdocker/.env
 docker/.env
+node_modules
