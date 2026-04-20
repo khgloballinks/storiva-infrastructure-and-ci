@@ -10,4 +10,6 @@ Thumbs.db
 docker/.env
 
 .envdocker/.env
-docker/.env
+docker/.
+
+node_modules/
