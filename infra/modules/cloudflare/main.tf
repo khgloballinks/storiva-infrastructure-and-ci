@@ -8,12 +8,15 @@ terraform {
 }
 
 resource "cloudflare_record" "this" {
-  zone_id = var.zone_id
-  name    = var.record_name
-  value   = var.ip_address
-  type    = "A"
-  ttl     = var.ttl
-  proxied = var.proxied
+  for_each = var.records
 
-  comment = "Managed by Terraform — storiva ${var.env}"
+  zone_id = var.zone_id
+
+  name    = each.value.name
+  value   = each.value.value
+  type    = each.value.type
+  ttl     = each.value.ttl
+  proxied = each.value.proxied
+
+  comment = "Managed by Terraform — ${var.env}"
 }

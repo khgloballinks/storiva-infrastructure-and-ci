@@ -1,6 +1,20 @@
-variable "env"         { type = string }
-variable "zone_id"     { type = string; sensitive = true }
-variable "record_name" { type = string }
-variable "ip_address"  { type = string }
-variable "ttl"         { type = number; default = 1 }        # 1 = auto when proxied
-variable "proxied"     { type = bool;   default = false }    # true = Cloudflare proxy (orange cloud)
+variable "env" {
+  description = "Environment name (prod, staging, dev)"
+  type        = string
+}
+
+variable "zone_id" {
+  description = "Cloudflare Zone ID"
+  type        = string
+}
+
+variable "records" {
+  description = "Map of DNS records to create"
+  type = map(object({
+    name    = string
+    value   = string
+    type    = string   # A, AAAA, CNAME, TXT, MX, etc.
+    ttl     = number
+    proxied = bool
+  }))
+}
